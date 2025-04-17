@@ -49,7 +49,7 @@ This ***example script*** automates the installation and configuration of Blobfu
 
 3. **Create your Terraform azurerm_linux_virtual_machine resource:**
 
-    Use the [custom_data]([https://](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/linux_virtual_machine#custom_data-1)) argument and [templatefile function]([https://](https://developer.hashicorp.com/terraform/language/functions/templatefile)).
+    Use the [custom_data](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/linux_virtual_machine#custom_data-1) argument and [templatefile function](https://developer.hashicorp.com/terraform/language/functions/templatefile).
 
     **Example:**
 
@@ -74,11 +74,11 @@ This ***example script*** automates the installation and configuration of Blobfu
 
 ## Links
 
-[What is BlobFuse?]([https://](https://learn.microsoft.com/en-us/azure/storage/blobs/blobfuse2-what-is))
+[What is BlobFuse?](https://learn.microsoft.com/en-us/azure/storage/blobs/blobfuse2-what-is)
 
-[Azure-storage-fuse wiki]([https://](https://github.com/Azure/azure-storage-fuse/wiki))
+[Azure-storage-fuse wiki](https://github.com/Azure/azure-storage-fuse/wiki)
 
-[Linux Software Repository for Microsoft Products]([https://](https://learn.microsoft.com/en-us/linux/packages))
+[Linux Software Repository for Microsoft Products](https://learn.microsoft.com/en-us/linux/packages)
 
 ## Important Security Notes
 
@@ -107,7 +107,3 @@ This ***example script*** automates the installation and configuration of Blobfu
 ## Logging
 
 All output is logged to `/var/log/blobfuse-init.log` with UTC timestamps.
-
-## License
-
-[MIT License]
