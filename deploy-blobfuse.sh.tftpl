@@ -1,0 +1,213 @@
+#!/bin/bash
+# Blobfuse Installation and Configuration Script
+# Author: Robert Toth
+
+# set -euo pipefail
+exec > /var/log/blobfuse-init.log 2>&1
+
+# Input variables
+# storage_account_name="$1"
+# storage_account_key="$2"
+# container_name="$3"
+mnt_path="${mount_path}"
+# tmp_path="$5"
+
+# Constant for the blobfuse v1 configuration file content
+BLOBFUSEV1_CONFIG_CONTENT="accountName ${storage_account_name}
+accountKey ${storage_account_key}
+authType Key
+containerName ${container_name}"
+readonly BLOBFUSEV1_CONFIG_CONTENT
+
+# Constant for the blobfuse v2 configuration file content
+BLOBFUSEV2_CONFIG_CONTENT="allow-other: true
+logging:
+  type: syslog
+components:
+  - libfuse
+  - azstorage
+libfuse:
+  mount-path: /mnt/blobfuse2
+  tmp-path: /mnt/blobfuse2tmp
+  allow-other: true
+azstorage:
+  type: block
+  account-name: ${storage_account_name}
+  account-key: ${storage_account_key}
+  mode: key
+  container: ${container_name}"
+readonly BLOBFUSEV2_CONFIG_CONTENT
+
+#######################################
+# Takes a string as an argument and outputs the same string with the date at the beginning.
+# Timestemp format: ISO 8601
+# Arguments:
+#   Input string
+# Returns:
+#   >>>>> [YEAR-MONTH-DAYTHOUR:MINUTES:SECOND] <input string>
+#######################################
+echo_prefix() {
+  local timestamp
+  timestamp=$(date -u +"[%Y-%m-%dT%H:%M:%SZ]:")
+  # timestamp=$(date -u +"[%a %Y-%m-%d %H:%M:%S UTC]:")
+  echo ">>>>> $timestamp $@"
+}
+
+# Determine Linux distribution and version
+if command -v lsb_release &> /dev/null; then
+  DISTRIBUTION=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
+  VERSION=$(lsb_release -rs)
+elif [ -f /etc/os-release ]; then
+  # shellcheck source=/dev/null
+  source /etc/os-release
+  DISTRIBUTION=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
+  VERSION="$VERSION_ID"
+elif [ -f /etc/redhat-release ]; then
+  DISTRIBUTION="rhel"
+  VERSION=$(< /etc/redhat-release grep -oE '[0-9]+')
+elif [ -f /etc/SuSE-release ]; then
+  DISTRIBUTION="sles"
+  VERSION=$(< /etc/redhat-release grep -oE '[0-9]+')
+else
+  echo_prefix "Unable to determine distribution and version."
+  exit 1
+fi
+
+echo_prefix "Distribution: $DISTRIBUTION"
+echo_prefix "Version: $VERSION"
+
+# Install Microsoft repository
+case "$DISTRIBUTION" in
+  ubuntu)
+    URL="https://packages.microsoft.com/config/ubuntu/$${VERSION}/packages-microsoft-prod.deb"
+    echo_prefix "Microsoft repository URL: $URL"
+    sudo wget "$URL"
+    sudo dpkg -i packages-microsoft-prod.deb
+    sudo apt-get update
+    ;;
+  rhel)
+    URL="https://packages.microsoft.com/config/rhel/$${VERSION}/packages-microsoft-prod.rpm"
+    echo_prefix "$URL"
+    sudo rpm -Uvh "$URL"
+    ;;
+  sles)
+    URL="https://packages.microsoft.com/config/sles/$${VERSION}/packages-microsoft-prod.rpm"
+    echo_prefix "$URL"
+    sudo rpm -Uvh "$URL"
+    ;;
+  *)
+    echo_prefix "Unsupported distribution: $DISTRIBUTION"
+    exit 1
+    ;;
+esac
+
+# Check and install blobfuse2 or blobfuse and track the installed version
+BLOBFUSE_VERSION="none" # Initialize the tracker
+
+if command -v blobfuse2 &> /dev/null; then
+  echo_prefix "blobfuse2 is already installed."
+  BLOBFUSE_VERSION="blobfuse2"
+elif command -v blobfuse &> /dev/null; then
+  echo_prefix "blobfuse is already installed."
+  BLOBFUSE_VERSION="blobfuse"
+else
+  echo_prefix "blobfuse2 or blobfuse not found. Attempting installation..."
+  case "$DISTRIBUTION" in
+    ubuntu)
+      if sudo apt-get update && sudo apt-get install -y blobfuse2; then
+        echo_prefix "blobfuse2 installed successfully."
+        BLOBFUSE_VERSION="blobfuse2"
+      elif sudo apt-get install -y blobfuse; then
+          echo_prefix "blobfuse installed successfully."
+          BLOBFUSE_VERSION="blobfuse"
+      else
+        echo_prefix "Failed to install blobfuse2 or blobfuse."
+        exit 1
+      fi
+      ;;
+    rhel | sles)
+      if sudo yum install -y blobfuse2; then
+        echo_prefix "blobfuse2 installed successfully."
+        BLOBFUSE_VERSION="blobfuse2"
+      elif sudo yum install -y blobfuse; then
+          echo_prefix "blobfuse installed successfully."
+          BLOBFUSE_VERSION="blobfuse"
+      else
+        echo_prefix "Failed to install blobfuse2 or blobfuse."
+        exit 1
+      fi
+      ;;
+    *)
+      echo_prefix "Unsupported distribution: $DISTRIBUTION"
+      exit 1
+      ;;
+  esac
+fi
+
+echo_prefix "blobfuse/blobfuse2 check and installation complete. Installed version: $BLOBFUSE_VERSION"
+
+# Create mount directories
+echo_prefix "Creating directories"
+sudo mkdir -p "$${mnt_path}" "$${mnt_path}tmp" "/etc/blobfuse"
+sudo chown root:root "$${mnt_path}" "$${mnt_path}tmp"
+
+# Create blobfuse config and mount the Azure SA.
+case "$BLOBFUSE_VERSION" in
+  blobfuse)
+    # Create blobfuse config
+    echo_prefix "Writing config into /etc/blobfuse/config.cfg"
+    echo "$BLOBFUSEV1_CONFIG_CONTENT" | sudo tee /etc/blobfuse/config.cfg
+    sudo chown root:root "$${mnt_path}" "$${mnt_path}tmp"
+    sudo chmod 600 /etc/blobfuse/config.cfg
+
+    if [ -f /etc/blobfuse/config.cfg ] && [ -d "$${mnt_path}" ] && [ -d "$${mnt_path}tmp" ]; then
+      # Mount the Azure SA blob
+      echo_prefix "Mounting Azure blob"
+      sudo blobfuse "$${mnt_path}" \
+        --tmp-path="$${mnt_path}tmp" \
+        --config-file=/etc/blobfuse/config.cfg \
+        -o attr_timeout=240 -o entry_timeout=240 -o negative_timeout=120 -o allow_other
+
+      # Mount the blob container permanently
+      FSTAB_LINE="blobfuse $${mnt_path} fuse defaults,_netdev,--tmp-path=$${mnt_path}tmp,--config-file=/etc/blobfuse/fuse_connection.cfg,--log-level=LOG_DEBUG,allow_other 0 0"
+      sudo sh -c "grep -qxF '$FSTAB_LINE' /etc/fstab || echo '$FSTAB_LINE' >> /etc/fstab"
+      echo_prefix "Blobfuse container mounted permanently"
+    else
+      echo_prefix "Blobfuse config file or directories missing. No mountpoint created."
+      exit 1
+    fi
+  ;;
+  blobfuse2)
+    # Modify the /etc/fuse.conf
+    # Check if the user_allow_other line exists and is commented out
+    if grep -q "^#user_allow_other$" /etc/fuse.conf; then
+      # Replace the commented line with the uncommented version
+      sudo sed -i 's/^#user_allow_other$/user_allow_other/' /etc/fuse.conf
+      echo_prefix "user_allow_other enabled in /etc/fuse.conf"
+    elif grep -q "^user_allow_other$" /etc/fuse.conf; then
+      echo_prefix "user_allow_other is already enabled in /etc/fuse.conf"
+    else
+      # Append the user_allow_other line if it doesn't exist
+      echo "user_allow_other" >> sudo /etc/fuse.conf
+      echo_prefix "user_allow_other added to /etc/fuse.conf"
+    fi
+
+    if [ -f /etc/blobfuse/config.yaml ] && [ -d "$${mnt_path}" ]; then
+      # Mount the Azure SA blob
+      echo_prefix "Mounting Azure blob"
+      echo "$BLOBFUSEV2_CONFIG_CONTENT" | sudo tee /etc/blobfuse/config.yaml
+      sudo blobfuse2 mount $${mnt_path} --config-file=/etc/blobfuse/config.yaml
+
+      # Mount the blob container permanently
+      FSTAB_LINE="blobfuse2 $${mnt_path} fuse3 defaults,_netdev,--config-file=etc/blobfuse/config.yaml,allow_other 0 0"
+      sudo sh -c "grep -qxF '$FSTAB_LINE' /etc/fstab || echo '$FSTAB_LINE' >> /etc/fstab"
+      echo_prefix "Blobfuse container mounted permanently"
+    else
+      echo_prefix "Blobfuse config file or directories missing. No mountpoint created."
+      exit 1
+    fi
+  ;;
+esac
+
+echo_prefix "$BLOBFUSE_VERSION deployment has been completed. Azure blob has been mounted here: $${mnt_path} "
+rm packages-microsoft-prod.deb
