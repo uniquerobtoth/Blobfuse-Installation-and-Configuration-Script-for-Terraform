@@ -88,9 +88,9 @@ This ***example script*** automates the installation and configuration of Blobfu
 
 ## Supported Distributions
 
-* Ubuntu (20.04, 22.04, 24.04 and other debian based distros)
-* RHEL (7, 8, 9)
-* SLES (12, 15)
+* Ubuntu
+* RHEL
+* SLES
 
 ## Dependencies
 
